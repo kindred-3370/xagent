@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Main entry point for the xagent Web module
+
+Usage:
+    python -m xagent.web
+    python -m xagent.web --host 0.0.0.0 --port 8000
+    python -m xagent.web --reload --debug
+"""
+
+import argparse
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import cast
+
+import uvicorn
+from dotenv import load_dotenv
+
+from .logging_config import LogLevel, setup_logging
+
+# Load environment variables from .env file
+load_dotenv()
+
+
+JWT_ENV_KEYS = (
+    "XAGENT_JWT_SECRET",
+    "XAGENT_JWT_ALGORITHM",
+    "XAGENT_ACCESS_TOKEN_EXPIRE_MINUTES",
+    "XAGENT_REFRESH_TOKEN_EXPIRE_DAYS",
+    "XAGENT_PASSWORD_MIN_LENGTH",
+)
+
+FLIGHT_DORIS_ENV_KEY = "XAGENT_EXTERNAL_DB_FLIGHT_DORIS"
+
+
+def warn_if_flight_doris_unconfigured(logger: logging.Logger) -> None:
+    """Log once if flight dynamic SQL tool has no connection URL (env or overrides)."""
+    if os.getenv(FLIGHT_DORIS_ENV_KEY):
+        logger.info(
+            "Flight dynamic Doris connection configured (%s is set).",
+            FLIGHT_DORIS_ENV_KEY,
+        )
+        return
+    logger.warning(
+        "Flight dynamic stats tool will fail until %s is set (e.g. "
+        "mysql+pymysql://root:@127.0.0.1:9030/xagent with no password, or "
+        "mysql+pymysql://USER:PASS@127.0.0.1:9030/xagent). "
+        "Add it to .env and restart the server.",
+        FLIGHT_DORIS_ENV_KEY,
+    )
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
+def _load_example_env_values() -> dict[str, str]:
+    example_env_path = Path(__file__).resolve().parents[3] / "example.env"
+    if not example_env_path.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for line in example_env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+
+        key, raw_value = stripped.split("=", 1)
+        key = key.strip()
+        if key not in JWT_ENV_KEYS:
+            continue
+
+        values[key] = _strip_wrapping_quotes(raw_value.strip())
+
+    return values
+
+
+def warn_if_example_jwt_config(logger: logging.Logger) -> None:
+    example_values = _load_example_env_values()
+    if not example_values:
+        return
+
+    matched_keys = [
+        key
+        for key, example_value in example_values.items()
+        if os.getenv(key) == example_value
+    ]
+
+    if not matched_keys:
+        return
+
+    logger.warning(
+        "⚠️ JWT-related environment variables are still using example defaults: %s. Please update your .env for production.",
+        ", ".join(matched_keys),
+    )
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description="Start xagent Web service",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    python -m xagent.web                     # Start with default configuration
+    python -m xagent.web --port 8001         # Specify port
+    python -m xagent.web --reload --debug    # Development mode + debug mode
+    python -m xagent.web --host 0.0.0.0      # Listen on all interfaces
+    python -m xagent.web --debug             # Enable verbose logging (LLM responses, etc.)
+        """,
+    )
+
+    parser.add_argument(
+        "--host", default="127.0.0.1", help="Server host address (default: 127.0.0.1)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=8000, help="Server port (default: 8000)"
+    )
+    parser.add_argument(
+        "--reload", action="store_true", help="Enable auto-reload (development mode)"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode (verbose logging, including LLM responses)",
+    )
+    parser.add_argument(
+        "--log-level",
+        choices=["debug", "info", "warning", "error", "critical"],
+        help="Log level (respects XAGENT_LOG_LEVEL env var, default: info)",
+    )
+
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Main function"""
+    args = parse_args()
+
+    # Configure logging BEFORE importing app
+    log_level = "debug" if args.debug else args.log_level
+    setup_logging(level=cast(LogLevel, log_level) if log_level else None)
+
+    logger = logging.getLogger(__name__)
+    warn_if_example_jwt_config(logger)
+    warn_if_flight_doris_unconfigured(logger)
+
+    # Show debug banner if --debug was used
+    if args.debug:
+        print("🐛 Debug mode enabled")
+        print("🔍 LLM responses and tool call details will be logged")
+        print("-" * 50)
+
+    logger.info("🚀 Starting xagent Web service...")
+    logger.info(f"📍 Service URL: http://{args.host}:{args.port}")
+
+    if args.reload:
+        logger.info("🔄 Development mode: auto-reload enabled")
+
+    if args.debug:
+        logger.info("🐛 Debug mode: verbose logging enabled")
+
+    try:
+        uvicorn.run(
+            "xagent.web.app:app",
+            host=args.host,
+            port=args.port,
+            reload=args.reload,
+            log_level=log_level,
+        )
+    except KeyboardInterrupt:
+        logger.info("⏹️  Service stopped")
+    except Exception as e:
+        logger.error(f"❌ Startup failed: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

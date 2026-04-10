@@ -1,0 +1,113 @@
+name: Test Database Migrations
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/xagent/migrations/**'
+      - 'tests/migrations/**'
+      - '.github/workflows/test-migrations.yml'
+      - 'src/xagent/db/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/xagent/migrations/**'
+      - 'tests/migrations/**'
+      - '.github/workflows/test-migrations.yml'
+      - 'src/xagent/db/**'
+
+jobs:
+  test-sqlite-migrations:
+    name: Test SQLite Migrations
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+          pip install pytest pytest-mock
+
+      - name: Test migration upgrade
+        run: |
+          python tests/migrations/test_migration_integration.py --db sqlite upgrade
+
+      - name: Test migration idempotence
+        run: |
+          python tests/migrations/test_migration_integration.py --db sqlite idempotence
+
+      - name: Test incremental upgrades
+        run: |
+          python tests/migrations/test_migration_integration.py --db sqlite incremental
+
+      - name: Test migration downgrade
+        run: |
+          python tests/migrations/test_migration_integration.py --db sqlite downgrade
+
+  test-postgresql-migrations:
+    name: Test PostgreSQL Migrations
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_USER: xagent
+          POSTGRES_PASSWORD: xagent
+          POSTGRES_DB: xagent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+          pip install pytest pytest-mock
+
+      - name: Test migration upgrade
+        run: |
+          python tests/migrations/test_migration_integration.py --db postgresql upgrade
+        env:
+          DATABASE_URL: postgresql://xagent:xagent@localhost:5432/xagent_test
+
+      - name: Test migration idempotence
+        run: |
+          python tests/migrations/test_migration_integration.py --db postgresql idempotence
+        env:
+          DATABASE_URL: postgresql://xagent:xagent@localhost:5432/xagent_test
+
+      - name: Test incremental upgrades
+        run: |
+          python tests/migrations/test_migration_integration.py --db postgresql incremental
+        env:
+          DATABASE_URL: postgresql://xagent:xagent@localhost:5432/xagent_test
+
+      - name: Test migration downgrade
+        run: |
+          python tests/migrations/test_migration_integration.py --db postgresql downgrade
+        env:
+          DATABASE_URL: postgresql://xagent:xagent@localhost:5432/xagent_test
