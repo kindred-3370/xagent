@@ -7,6 +7,7 @@ import pytest
 from xagent.core.tools.core.flight_dynamic_sql import (
     MAX_RANGE_DAYS,
     _build_daily_stats_sql,
+    _build_total_count_sql,
     _resolve_range,
 )
 
@@ -44,3 +45,10 @@ def test_build_sql_contains_bounds_and_table() -> None:
 
 def test_max_range_constant() -> None:
     assert MAX_RANGE_DAYS == 366
+
+
+def test_build_total_count_sql() -> None:
+    sql = _build_total_count_sql()
+    assert "t_flight_dynamic_report" in sql
+    assert "COUNT(*)" in sql
+    assert "total_count" in sql.lower()

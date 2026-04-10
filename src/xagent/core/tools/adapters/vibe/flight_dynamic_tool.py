@@ -1,7 +1,8 @@
 """
-Flight dynamic daily stats tool — DATABASE category, fixed SQL via flight_dynamic_sql.
+Flight dynamic Doris tools — DATABASE category, fixed SQL via flight_dynamic_sql.
 
-Enable only on dedicated agents via allowed_tools: get_flight_dynamic_daily_stats
+Enable on dedicated agents via allowed_tools, e.g.:
+get_flight_dynamic_daily_stats, get_flight_dynamic_total_count
 """
 
 import logging
@@ -12,6 +13,7 @@ from ....workspace import TaskWorkspace
 from ...core.flight_dynamic_sql import (
     FLIGHT_DORIS_CONNECTION_NAME,
     fetch_flight_dynamic_daily_stats,
+    fetch_flight_dynamic_total_count,
 )
 from .base import ToolCategory
 from .factory import ToolFactory, register_tool
@@ -58,6 +60,13 @@ class FlightDynamicTool:
             workspace=self._workspace,
         )
 
+    def get_flight_dynamic_total_count(self) -> dict[str, Any]:
+        return fetch_flight_dynamic_total_count(
+            connection_name=FLIGHT_DORIS_CONNECTION_NAME,
+            connection_url=self._resolve_connection_url(FLIGHT_DORIS_CONNECTION_NAME),
+            workspace=self._workspace,
+        )
+
     def get_tools(self) -> list[FlightDynamicFunctionTool]:
         return [
             FlightDynamicFunctionTool(
@@ -70,8 +79,10 @@ class FlightDynamicTool:
                     Uses fixed aggregation on table t_flight_dynamic_report (TO_DATE(create_time)).
                     Connection name is always FLIGHT_DORIS (configure XAGENT_EXTERNAL_DB_FLIGHT_DORIS).
 
-                    For natural-language questions about "daily flight dynamics statistics", call this
-                    tool first; summarize results for the user and state the actual date range used.
+                    For natural-language questions about daily trends, time series, or per-day
+                    statistics, call this tool (UI may show a chart from the result). Do NOT use
+                    this for total row count of the whole table — use get_flight_dynamic_total_count
+                    instead.
 
                     Args:
                         start_date: Optional start date inclusive, format YYYY-MM-DD.
@@ -94,6 +105,28 @@ class FlightDynamicTool:
                     "",
                 ),
                 tags=["sql", "database", "doris", "flight", "statistics"],
+            ),
+            FlightDynamicFunctionTool(
+                self.get_flight_dynamic_total_count,
+                name="get_flight_dynamic_total_count",
+                description=indent(
+                    dedent("""
+                    Return the total number of rows in flight dynamic report table (full table COUNT).
+
+                    Fixed query on t_flight_dynamic_report. Connection FLIGHT_DORIS
+                    (configure XAGENT_EXTERNAL_DB_FLIGHT_DORIS).
+
+                    Use when the user asks how many records exist overall (total table size),
+                    e.g. "how many rows in total", "full table count", "current total number of
+                    flight dynamic records". No date range; no chart.
+
+                    Returns:
+                        dict with schema_version flight_total_rows_v1, success, total_count (int),
+                        message, error (if failed).
+                    """),
+                    "",
+                ),
+                tags=["sql", "database", "doris", "flight", "count"],
             ),
         ]
 
